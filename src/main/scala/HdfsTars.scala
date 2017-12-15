@@ -1,4 +1,5 @@
-import java.io.{InputStream, OutputStream}
+import java.io.{FileInputStream, InputStream, OutputStream}
+import java.util.Properties
 import java.util.zip.{GZIPInputStream, ZipEntry, ZipInputStream}
 
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
@@ -7,21 +8,23 @@ import org.apache.hadoop.fs.{FSDataOutputStream, Path, FileSystem => HDFSFileSys
 import org.apache.hadoop.io.IOUtils
 import org.apache.hadoop.io.compress.{CompressionCodec, CompressionCodecFactory}
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control._
-//import org.apache.tools.tar.{TarEntry, TarInputStream}
-import org.kamranzafar.jtar.{TarEntry, TarInputStream}
+import org.apache.tools.tar.{TarEntry, TarInputStream}
+//import org.kamranzafar.jtar.{TarEntry, TarInputStream}
 
 
 /**
   * Created by linkedmemuller on 06/12/2017.
   */
-class HdfsTars {
-
-}
+//class HdfsTars {
+//
+//}
 
 object HdfsTars {
 
+  val propertiesPath="prefixfile.properties"
   def uncompressForHadoop(srcDir: String, outputDir: String, fs: HDFSFileSystem): Unit = {
     var in: InputStream = null
     var out: OutputStream = null
@@ -48,71 +51,111 @@ object HdfsTars {
   }
 
   def main(args: Array[String]): Unit = {
-
-    if (args.length < 2) {
-
+    if (args.length < 3) {
       sys.exit(0)
       return
     }
-    println(" begin untar ing")
     val tarFile = args(0)
     val hdfsDest = args(1)
-    //    val hdfsURI = args(2)
-    //    val hadoopUser = args(3)
+    val propertiesPaths=args(2)
+    val hadoopUser=args(3)
     val FS = "hdfs://192.168.255.161:9000"
-    //  System.setProperty("HADOOP_USER_NAME",hadoopUser)
-    // val path=new Path(hdfsURI)
     val conf = new Configuration()
     conf.set("fs.defaultFS", FS)
+    System.setProperty("HADOOP_USER_NAME",hadoopUser)
+    conf.set("HADOOP_USER_NAME",hadoopUser)
     val fs = HDFSFileSystem.get(conf)
-    println("tarfile " + tarFile + " desrt " + hdfsDest + " fs " + fs)
-    umcompresstar(tarFile, hdfsDest, fs)
+    println(" begin untar ing")
+    println("tarfile " + tarFile + " desrt " + hdfsDest + " path " + propertiesPaths+"fs "+fs)
+    unCompressTarParentDir(tarFile,hdfsDest,fs,propertiesPaths)
+    //umcompresstar(tarFile, hdfsDest, fs,propertiesPaths)
+    //    val hdfsURI = args(2)
+    //    val hadoopUser = args(3)
+    System.setProperty("HADOOP_USER_NAME",hadoopUser)
+    // val path=new Path(hdfsURI)
     //uncompressForHadoop(tarFile,hdfsDest,fs)
     //    val inStream = unTars(tarFile)
     //    val outStream = setUpHDFSDest(hadoopUser, hdfsURI, hdfsDest)
     //    readAndWrite(inStream, outStream)
   }
 
-  def umcompresstar(srcDir: String, outputDir: String, fs: HDFSFileSystem): Unit = {
-
+  /**
+    * 解压 hdfs tar 文件父级文件夹
+    * @param srcDir
+    * @param outputDir
+    * @param fs
+    * @param propertiesPath
+    */
+  def  unCompressTarParentDir(srcDir: String, outputDir: String, fs: HDFSFileSystem,propertiesPath:String): Unit = {
+    if(srcDir.endsWith(".tar.gz")||srcDir.endsWith(".tar.bz2")||srcDir.endsWith(".tgz")||srcDir.endsWith(".tar")){
+      println("single tar file")
+      newUnCompressFile(srcDir,outputDir,fs,propertiesPath)
+    }else{
+      val hdfsTarfiles=fs.listFiles(new Path(srcDir),true)
+      while (hdfsTarfiles.hasNext){
+        val tarName=hdfsTarfiles.next().getPath.toString
+        println("parent tarname"+tarName)
+        newUnCompressFile(tarName,outputDir,fs,propertiesPath)
+      }
+    }
+  }
+  def newUnCompressFile(srcDir: String, outputDir: String, fs: HDFSFileSystem,propertiesPath:String): Unit = {
+    val srcTemp: String = srcDir.toLowerCase()
+    if (srcTemp.endsWith(".tar.gz")||srcTemp.endsWith(".tar.bz2")||srcTemp.endsWith(".tgz")||srcTemp.endsWith(".tar")) {
+    CompressUtils.tarFileUnCompress(srcDir,outputDir,fs,propertiesPath)
+    }else if (srcTemp.endsWith(".bz2")||srcTemp.endsWith(".gz")||srcTemp.endsWith(".zip")) {
+    CompressUtils.zipBz2gzipFileUnCompress(srcDir,outputDir,fs)
+    }
+    }
+  def umcompresstar(srcDir: String, outputDir: String, fs: HDFSFileSystem,propertiesPath:String): Unit = {
     var tarln: TarInputStream = null
     var is: InputStream = null
     println("umcompresstar method execing")
     try {
       val srcTemp: String = srcDir.toLowerCase()
-      if (srcTemp.endsWith(".tar.gz")) {
+      if (srcTemp.endsWith(".tar.gz")||srcTemp.endsWith(".tar.bz2")||srcTemp.endsWith(".tgz")||srcTemp.endsWith(".tar")) {
         println("srctemp tar.gz uncompressing")
-        tarln = new TarInputStream(new GZIPInputStream(fs.open(new Path(srcDir))))
+        tarln = CompressUtils.tarfileStreamBySuffix(srcTemp,fs)
         println("tarball  umcompress successfully")
-      } else if (srcTemp.endsWith(".tar.bz2")) {
-        tarln = new TarInputStream(new BZip2CompressorInputStream(fs.open(new Path(srcDir))))
-      } else if (srcTemp.endsWith(".tgz")) {
-        tarln = new TarInputStream(new GZIPInputStream(fs.open(new Path(srcDir))))
-      } else if (srcTemp.endsWith(".tar")) {
-        tarln = new TarInputStream(fs.open(new Path(srcDir)))
-      } else if (srcTemp.endsWith(".bz2")) {
-        is = new BZip2CompressorInputStream(fs.open(new Path(srcDir)))
-      } else if (srcTemp.endsWith(".gz")) {
-        is = new GZIPInputStream(fs.open(new Path(srcDir)))
-      } else if (srcTemp.endsWith(".zip")) {
-        is = new ZipInputStream(fs.open(new Path(srcDir)))
+      } else if (srcTemp.endsWith(".bz2")||srcTemp.endsWith(".gz")||srcTemp.endsWith(".zip")) {
+        is =CompressUtils.zipBz2gzipFileStreamBySuffix(srcTemp,fs)
       }
       if (srcTemp.endsWith(".tar.gz") || srcTemp.endsWith(".tar.bz2") || srcTemp.endsWith(".tgz") || srcTemp.endsWith(".tar")) {
         println("begin uncompress log data tar gz")
         var entry: TarEntry = null
         while ( {
-          entry = tarln.getNextEntry; entry != null
+          try{
+            entry = tarln.getNextEntry; entry != null
+          }catch {
+            case e:Exception => false
+          }
         }) {
           try {
-
             if (entry.isDirectory) {
               println("tar entry.getName  " + entry.getName + "   || outputDir:  " + outputDir)
               val ps: Path = new Path(outputDir + "/" + entry.getName)
               fs.mkdirs(ps)
             } else {
               println("tar OutputStream entry.getName  " + entry.getName + "  || outputDir:  " + outputDir)
-              val in: String = entry.getName
-              if (in.contains("biz.log") || in.contains("info.log") || in.contains("ad_status") || in.contains("ad_behavior")) {
+              val tarEntryName: String = entry.getName
+              //if (in.contains("biz.log") || in.contains("info.log") || in.contains("ad_status") || in.contains("ad_behavior"))
+              var flag:Boolean=false
+              val loop:Breaks =new Breaks
+              val proSeq=CompressUtils.converOuterPropertiesToSeq(propertiesPath)(",")
+              loop.breakable {
+                proSeq.foreach(fliePrefix=>{
+                  val suffixContain=tarEntryName.contains(fliePrefix)
+                  println("bool fliePrefix || " + fliePrefix + " res  || " + suffixContain)
+                  if (suffixContain==true){
+                    println(" suffixContain   && "+suffixContain)
+                    flag=true
+                    loop.break()
+                  }
+                })
+
+              }
+              println("flag || "+ flag)
+              if(flag==true) {
                 val pss: Path = new Path(outputDir + "/" + entry.getName)
                 val out: FSDataOutputStream = fs.create(pss)
                 try {
@@ -122,8 +165,16 @@ object HdfsTars {
                   //              import loop.{break,breakable}
                   //              breakable { }
                   while ( {
-                    length = tarln.read(arrayBuffer);
-                    length != -1
+                    try {
+                      length = tarln.read(arrayBuffer);
+                      length != -1
+                    }catch {
+                      case e : IndexOutOfBoundsException => {
+                        println("read length"+length)
+                        false
+                      }
+                    }
+
                   }) {
                     val ale = arrayBuffer.length
                     //println(" arrayBuffer "+ale+" length "+ length)
@@ -185,9 +236,9 @@ object HdfsTars {
 
         }
       } else {
-        val fileName: String = getFileName(srcDir)
+        val fileName: String = CompressUtils.getFileName(srcDir)
         val pass: Path = new Path(outputDir + "/" + fileName)
-        val out: OutputStream = fs.create(pass)
+        val out: FSDataOutputStream = fs.create(pass)
         try {
           var length: Int = 0
           val arrayBuffer: Array[Byte] = new Array[Byte](8192)
@@ -211,14 +262,6 @@ object HdfsTars {
       IOUtils.closeStream(is)
       fs.close()
     }
-  }
-
-  def getFileName(path: String): String = {
-    val tmps: Array[String] = path.split("/")
-    val tmsize = tmps.length
-    var fileName: String = tmps(tmsize - 1)
-    fileName = fileName.substring(0, fileName.lastIndexOf("."))
-    return fileName
   }
 
 
